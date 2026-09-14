@@ -1,0 +1,112 @@
+<!doctype html>
+<meta charset="utf-8">
+<style>
+  :root {
+    --ink: #17140f;          /* headline */
+    --ink-soft: #443c33;     /* subline */
+    --terracotta: #8a492d;   /* eyebrow text: 4.55:1 on #d6d2ce, AA */
+    --terracotta-rule: #9a5233; /* 5px bar is graphical, 3:1 is the bar */
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  html, body { width: 1280px; height: 640px; overflow: hidden; }
+  body {
+    position: relative;
+    background: #d6d1cb;
+    font-family: -apple-system, BlinkMacSystemFont, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  /* The photograph is the ground. Anchored low so all three objects survive
+     the 1.78:1 -> 2:1 crop, which takes its bite out of the empty sky. */
+  .ground {
+    position: absolute; inset: 0;
+    width: 100%; height: 100%;
+    object-fit: cover;
+    object-position: center center;
+  }
+
+  /* Lifts the left third so type sits on a consistently pale field rather than
+     the vignette, which measured #b6afa9 at the right edge. */
+  .wash {
+    position: absolute; inset: 0;
+    background: linear-gradient(100deg,
+      rgba(236,234,230,0.55) 0%,
+      rgba(236,234,230,0.30) 40%,
+      rgba(236,234,230,0.00) 62%);
+  }
+
+  .plate {
+    position: absolute;
+    left: 76px; top: 112px;
+    width: 660px;
+  }
+
+  .eyebrow {
+    font-size: 19px;
+    font-weight: 600;
+    letter-spacing: 0.22em;
+    text-transform: uppercase;
+    color: var(--terracotta);
+    margin-bottom: 26px;
+  }
+
+  h1 {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 66px;
+    line-height: 1.0;
+    letter-spacing: -0.025em;
+    font-weight: 600;
+    color: var(--ink);
+    margin-bottom: 28px;
+  }
+
+  .lede {
+    font-size: 30px;
+    line-height: 1.38;
+    font-weight: 450;
+    color: var(--ink-soft);
+    max-width: 600px;
+  }
+  .lede b { color: var(--ink); font-weight: 650; }
+
+  .rule {
+    width: 76px; height: 5px;
+    background: var(--terracotta-rule);
+    margin: 34px 0 0;
+  }
+
+  .foot {
+    position: absolute;
+    left: 72px; bottom: 58px;
+    display: flex; gap: 14px;
+  }
+  .chip {
+    font-family: ui-monospace, "SF Mono", Menlo, monospace;
+    font-size: 18px;
+    font-weight: 500;
+    color: var(--ink-soft);
+    background: rgba(255,255,255,0.72);
+    border: 1px solid rgba(23,20,15,0.14);
+    border-radius: 999px;
+    padding: 9px 17px;
+  }
+</style>
+
+<img class="ground" src="banner-bg.png" alt="">
+<div class="wash"></div>
+
+<div class="plate">
+  <div class="eyebrow">MCP Server</div>
+  <h1>codex-image-mcp</h1>
+  <p class="lede">
+    Image generation in Claude&nbsp;Code, paid for by the
+    <b>ChatGPT subscription you already have</b>.
+  </p>
+  <div class="rule"></div>
+</div>
+
+<div class="foot">
+  <span class="chip">no API key</span>
+  <span class="chip">gpt-image-2</span>
+  <span class="chip">macOS</span>
+</div>
