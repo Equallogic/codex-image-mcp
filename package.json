@@ -1,0 +1,41 @@
+{
+  "name": "codex-image-mcp",
+  "version": "1.0.0",
+  "description": "MCP server: generate images via the Codex CLI bundled in ChatGPT.app, on the ChatGPT plan (no API key).",
+  "type": "module",
+  "bin": {
+    "codex-image-mcp": "./server.js"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "license": "MIT",
+  "author": "Matt Greaves",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Equallogic/codex-image-mcp.git"
+  },
+  "homepage": "https://github.com/Equallogic/codex-image-mcp#readme",
+  "keywords": [
+    "mcp",
+    "mcp-server",
+    "model-context-protocol",
+    "claude",
+    "claude-code",
+    "anthropic",
+    "image-generation",
+    "ai-image-generation",
+    "openai",
+    "gpt-image",
+    "gpt-image-2",
+    "codex",
+    "codex-cli",
+    "chatgpt",
+    "text-to-image",
+    "no-api-key",
+    "macos"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
