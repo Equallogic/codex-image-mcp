@@ -31,14 +31,23 @@ cd codex-image-mcp && npm install
 claude mcp add --scope user codex-image -- node "$(pwd)/server.js"
 ```
 
-Restart Claude Code. One tool appears:
+Restart Claude Code. Four tools appear:
 
 ```
-generate_image(prompt, output_path, [reference_images])
+generate_image(prompt, output_path, [reference_images], [transparent_background])
+edit_image(image_path, instruction, output_path, [reference_images], [transparent_background])
+second_opinion(question, [files], [cwd])
+review_code(repo_path, [base | commit], [instructions])
 ```
 
-It writes the file and hands back the path, format, dimensions, elapsed time and
-tokens spent. Roughly 45 seconds an image.
+The image tools write the file and hand back the path, format, dimensions,
+elapsed time and tokens spent. Roughly 45 seconds an image. `edit_image` never
+overwrites its source, and leaves the source's transparency alone unless told
+otherwise.
+
+`second_opinion` and `review_code` run GPT-6 Astra at high effort in a
+read-only sandbox, so another model family can check Claude's work without
+being able to change it. `review_code` reviews uncommitted work by default.
 
 ## What I learned making it reliable
 
@@ -97,9 +106,12 @@ directly and skip all of this.
 
 ## What it will not do
 
-`gpt-image-2` cannot produce transparent backgrounds. True transparency needs
-`gpt-image-1.5` through the paid API. Ask for a flat uniform background and key
-it out afterwards with the `remove_chroma_key.py` that ships inside Codex.
+Edits are instruction-driven over the whole image. Codex's image tool takes no
+mask, so describe the region in words.
+
+Transparent backgrounds work as of `codex-cli 0.159.2`, but the server does not
+take Codex's word for it: it decodes the PNG and fails unless pixels are
+actually clear. Expect a faint colour fringe on hard edges.
 
 It is also the wrong tool for icons and logotype. Draw those as SVG.
 
@@ -107,10 +119,13 @@ It is also the wrong tool for icons and logotype. Draw those as SVG.
 
 | variable | default |
 |---|---|
-| `CODEX_BIN` | `/Applications/ChatGPT.app/Contents/Resources/codex` |
+| `CODEX_BIN` | `/Applications/ChatGPT.app/Contents/Resources/codex-cli/bin/codex`, then the pre-October `Resources/codex` |
 | `CODEX_HOME` | `~/.codex` |
-| `CODEX_IMAGE_MODEL` | `gpt-5.6-sol` (the agent, not the image model) |
+| `CODEX_IMAGE_MODEL` | `gpt-6.1-sol` (the agent, not the image model) |
 | `CODEX_IMAGE_TIMEOUT_MS` | `300000` |
+| `CODEX_REVIEW_MODEL` | `gpt-6-astra` |
+| `CODEX_REVIEW_EFFORT` | `high` |
+| `CODEX_REVIEW_TIMEOUT_MS` | `900000` |
 
 macOS only, because the Codex binary lives inside the Mac app.
 
