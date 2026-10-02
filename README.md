@@ -31,13 +31,14 @@ cd codex-image-mcp && npm install
 claude mcp add --scope user codex-image -- node "$(pwd)/server.js"
 ```
 
-Restart Claude Code. Four tools appear:
+Restart Claude Code. Five tools appear:
 
 ```
 generate_image(prompt, output_path, [reference_images], [transparent_background])
 edit_image(image_path, instruction, output_path, [reference_images], [transparent_background])
 second_opinion(question, [files], [cwd])
 review_code(repo_path, [base | commit], [instructions])
+run_skill(skill, task, output_dir, [input_files])
 ```
 
 The image tools write the file and hand back the path, format, dimensions,
@@ -48,6 +49,13 @@ otherwise.
 `second_opinion` and `review_code` run GPT-6 Astra at high effort in a
 read-only sandbox, so another model family can check Claude's work without
 being able to change it. `review_code` reviews uncommitted work by default.
+
+`run_skill` hands a task to one of your own Codex skills, in `~/.codex/skills`
+or `~/.agents/skills`, so a skill built around the image model (packaging
+systems, lifestyle shots, brand boards) is one call away from Claude. Codex
+may write only inside `output_dir`, and the plugins that bring computer use
+stay off. You get Codex's report plus every file it actually wrote, read back
+from disk.
 
 ## What I learned making it reliable
 
@@ -126,6 +134,8 @@ It is also the wrong tool for icons and logotype. Draw those as SVG.
 | `CODEX_REVIEW_MODEL` | `gpt-6-astra` |
 | `CODEX_REVIEW_EFFORT` | `high` |
 | `CODEX_REVIEW_TIMEOUT_MS` | `900000` |
+| `CODEX_SKILL_EFFORT` | `medium` |
+| `CODEX_SKILL_TIMEOUT_MS` | `1800000` |
 
 macOS only, because the Codex binary lives inside the Mac app.
 

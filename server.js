@@ -25,7 +25,7 @@ import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { z } from "zod";
 import { execFile } from "node:child_process";
-import { readFile, stat, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { readFile, readdir, realpath, stat, mkdir, mkdtemp, rm } from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { inflateSync } from "node:zlib";
 import path from "node:path";
@@ -60,6 +60,19 @@ const REVIEW_EFFORT = process.env.CODEX_REVIEW_EFFORT || "high";
 const REVIEW_TIMEOUT_MS = Number(
   process.env.CODEX_REVIEW_TIMEOUT_MS || 900_000
 );
+
+// Skills are multi-step jobs that may render several images, so they get
+// more reasoning than the single-shot image agent and a far longer leash.
+const SKILL_EFFORT = process.env.CODEX_SKILL_EFFORT || "medium";
+const SKILL_TIMEOUT_MS = Number(process.env.CODEX_SKILL_TIMEOUT_MS || 1_800_000);
+
+// Where Codex discovers user skills. Measured under --ignore-user-config:
+// these still load, while plugin skills (and computer use with them) do not.
+const SKILL_ROOTS = [
+  path.join(CODEX_HOME, "skills"),
+  path.join(CODEX_HOME, "skills/.system"),
+  path.join(os.homedir(), ".agents/skills"),
+];
 
 // Suppressing the imagegen skill stops the agent reading its 24KB SKILL.md and
 // removes one whole model pass: 80,049 -> 61,197 aggregate input tokens.
@@ -321,12 +334,11 @@ async function runImageJob({ instruction, outPath, refs, transparent }) {
 }
 
 /**
- * Run a read-only Codex turn and return its final message. Read-only is the
- * point: a second opinion that can change the code it is judging is no
- * longer a second opinion.
+ * Run one Codex turn and capture its final message from -o, which is cleaner
+ * than fishing the last agent_message out of the JSON stream.
  */
-async function runReview(args, cwd) {
-  const tmp = await mkdtemp(path.join(os.tmpdir(), "codex-review-"));
+async function runAgent(args, cwd, { model, effort, timeout }) {
+  const tmp = await mkdtemp(path.join(os.tmpdir(), "codex-agent-"));
   const lastMessage = path.join(tmp, "last.md");
   try {
     const started = Date.now();
@@ -335,46 +347,81 @@ async function runReview(args, cwd) {
         ...args,
         "--ephemeral",
         "--ignore-user-config",
-        "-m", REVIEW_MODEL,
-        "-c", `model_reasoning_effort="${REVIEW_EFFORT}"`,
+        "-m", model,
+        "-c", `model_reasoning_effort="${effort}"`,
         "--json",
         "-o", lastMessage,
       ],
       cwd,
-      REVIEW_TIMEOUT_MS
+      timeout
     );
     const elapsed = ((Date.now() - started) / 1000).toFixed(1);
-    const usage = parseUsage(stdout);
-
     let answer = "";
     try {
       answer = (await readFile(lastMessage, "utf8")).trim();
     } catch {
       /* no final message */
     }
-    if (!answer) {
-      const tail = `${stdout}\n${stderr}`.trim().split("\n").slice(-12).join("\n");
-      return fail(
-        `${REVIEW_MODEL} returned no answer after ${elapsed}s.\n` +
-          (error ? `Codex exited with: ${error.message}\n` : "") +
-          `\nLast output from Codex:\n${tail}`
-      );
-    }
-    return {
-      content: [
-        {
-          type: "text",
-          text: `${answer}\n\n---\n${REVIEW_MODEL} (${REVIEW_EFFORT}), ` +
-            usageLine(elapsed, usage),
-        },
-      ],
-    };
+    const tail = `${stdout}\n${stderr}`.trim().split("\n").slice(-12).join("\n");
+    const failText =
+      (error ? `Codex exited with: ${error.message}\n` : "") +
+      `\nLast output from Codex:\n${tail}`;
+    return { ok: !error, answer, elapsed, usage: parseUsage(stdout), failText };
   } finally {
     await rm(tmp, { recursive: true, force: true });
   }
 }
 
-const server = new McpServer({ name: "codex-image", version: "1.1.0" });
+/**
+ * Run a read-only Codex turn and return its final message. Read-only is the
+ * point: a second opinion that can change the code it is judging is no
+ * longer a second opinion.
+ */
+async function runReview(args, cwd) {
+  const { answer, elapsed, usage, failText } = await runAgent(args, cwd, {
+    model: REVIEW_MODEL,
+    effort: REVIEW_EFFORT,
+    timeout: REVIEW_TIMEOUT_MS,
+  });
+  if (!answer) {
+    return fail(`${REVIEW_MODEL} returned no answer after ${elapsed}s.\n${failText}`);
+  }
+  return {
+    content: [
+      {
+        type: "text",
+        text: `${answer}\n\n---\n${REVIEW_MODEL} (${REVIEW_EFFORT}), ` +
+          usageLine(elapsed, usage),
+      },
+    ],
+  };
+}
+
+/** Every file under dir with its mtime, so a run can be diffed against it. */
+async function snapshot(dir) {
+  const files = new Map();
+  for (const rel of await readdir(dir, { recursive: true })) {
+    const info = await stat(path.join(dir, rel)).catch(() => null);
+    if (info?.isFile()) files.set(rel, info.mtimeMs);
+  }
+  return files;
+}
+
+/** One line per written file, judged from its bytes like the image tools. */
+async function describeFile(file) {
+  const buf = await readFile(file);
+  const mime = sniff(buf);
+  if (!mime) return `${file} (${buf.length.toLocaleString()} bytes)`;
+  const size = pngSize(buf);
+  const clear = transparentFraction(buf);
+  return (
+    `${file} (${mime}${size ? `, ${size.width}x${size.height}` : ""}` +
+    (clear ? `, ${(clear * 100).toFixed(1)}% transparent` : "") +
+    `)`
+  );
+}
+
+const server = new McpServer({ name: "codex-image", version: "1.2.0" });
 
 const transparentParam = z
   .boolean()
@@ -591,6 +638,115 @@ server.registerTool(
       args = [`Review ${target}. Focus: ${instructions}`];
     }
     return runReview(["exec", "review", ...args], expand(repo_path));
+  }
+);
+
+server.registerTool(
+  "run_skill",
+  {
+    title: "Run a Codex skill",
+    description:
+      "Run one of the user's Codex skills (from ~/.codex/skills or " +
+      "~/.agents/skills) on a task, e.g. black-marlin-packaging-system or " +
+      "product-lifestyle-shots. Codex follows the skill with GPT-6.1 Sol and " +
+      "its image model, on the ChatGPT plan. It can write only inside " +
+      "output_dir, and plugins (computer use, browser) stay off. Returns " +
+      "Codex's report plus every file it actually wrote, checked on disk. " +
+      "Takes minutes; a multi-image job can take ten or more.",
+    inputSchema: {
+      skill: z.string().min(1).describe("The skill's folder name."),
+      task: z
+        .string()
+        .min(1)
+        .describe("What to make, with every fact the skill needs; it sees nothing else."),
+      output_dir: z
+        .string()
+        .min(1)
+        .describe("Folder for everything it produces. Created if missing."),
+      input_files: z
+        .array(z.string())
+        .optional()
+        .describe("Source files it should use, e.g. approved product images. Read, never modified."),
+    },
+  },
+  async ({ skill, task, output_dir, input_files }) => {
+    if (!SKILL_ROOTS.some((root) => existsSync(path.join(root, skill, "SKILL.md")))) {
+      const names = [];
+      for (const root of SKILL_ROOTS) {
+        const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
+        for (const e of entries) {
+          if (existsSync(path.join(root, e.name, "SKILL.md"))) names.push(e.name);
+        }
+      }
+      return fail(`No skill named "${skill}". Available: ${names.sort().join(", ")}`);
+    }
+    const inputs = (input_files || []).map(expand);
+    const missing = inputs.filter((f) => !existsSync(f));
+    if (missing.length) return fail(`Input files not found: ${missing.join(", ")}`);
+
+    const outDir = expand(output_dir);
+    await mkdir(outDir, { recursive: true });
+    // The sandbox makes all of output_dir writable, so an input inside it
+    // would be protected by nothing but the prompt. Compare real paths so a
+    // symlink or case alias can't sneak one in.
+    const realOut = await realpath(outDir);
+    for (const f of inputs) {
+      const rel = path.relative(realOut, await realpath(f));
+      if (!rel.startsWith("..") && !path.isAbsolute(rel)) {
+        return fail(`Input ${f} is inside output_dir, where Codex could overwrite it. Use a separate output_dir.`);
+      }
+    }
+    const before = await snapshot(outDir);
+
+    let prompt = `Use the $${skill} skill for this task.\n\n${task}`;
+    if (inputs.length) {
+      prompt += `\n\nInput files:\n` + inputs.map((f) => `- ${f}`).join("\n");
+    }
+    prompt +=
+      `\n\nWrite every file you produce into ${outDir}. ` +
+      `Never modify, move or overwrite the input files.`;
+
+    // Inputs are deliberately not --add-dir'd: that would make their folders
+    // writable, and the sandbox can already read them.
+    const { ok, answer, elapsed, usage, failText } = await runAgent(
+      ["exec", "-C", outDir, "--sandbox", "workspace-write", "--skip-git-repo-check", prompt],
+      outDir,
+      { model: AGENT_MODEL, effort: SKILL_EFFORT, timeout: SKILL_TIMEOUT_MS }
+    );
+
+    // As with images, Codex's prose is not evidence; the folder is.
+    const after = await snapshot(outDir);
+    const written = [...after]
+      .filter(([rel, mtime]) => before.get(rel) !== mtime)
+      .map(([rel]) => path.join(outDir, rel));
+    if (!written.length) {
+      return fail(
+        `The ${skill} run wrote nothing to ${outDir} after ${elapsed}s.\n` +
+          (answer ? `\nCodex said:\n${answer}\n` : "") +
+          failText
+      );
+    }
+    const lines = await Promise.all(written.sort().map(describeFile));
+    // Files existing is not success: a run that crashed or timed out after
+    // writing a scratch prompt must not be reported as a finished job.
+    if (!ok) {
+      return fail(
+        `The ${skill} run failed after ${elapsed}s, leaving partial files:\n` +
+          lines.map((l) => `- ${l}`).join("\n") +
+          `\n${failText}`
+      );
+    }
+    return {
+      content: [
+        {
+          type: "text",
+          text:
+            `${answer || "(Codex gave no final message)"}\n\n---\n` +
+            `Files written:\n${lines.map((l) => `- ${l}`).join("\n")}\n` +
+            `${AGENT_MODEL} (${SKILL_EFFORT}), ${usageLine(elapsed, usage)}`,
+        },
+      ],
+    };
   }
 );
 
